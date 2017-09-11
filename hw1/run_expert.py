@@ -16,10 +16,6 @@ import tf_util
 import gym
 import load_policy
 
-def save_expert_data(data, env_name):
-    with open("expert_data/expert_data_" + env_name + ".picke", 'wb') as f:
-        pickle.dump(data, f)
-
 def main():
     import argparse
     parser = argparse.ArgumentParser()
@@ -46,24 +42,20 @@ def main():
         observations = []
         actions = []
 
-        expert_data = {}
-        expert_data['expert_action'] = []
-        expert_data['expert_obs'] = []
-
         for i in range(args.num_rollouts):
             print('iter', i)
             obs = env.reset()
+
             done = False
             totalr = 0.
             steps = 0
             while not done:
+                #print(obs.shape)
                 action = policy_fn(obs[None,:])
                 observations.append(obs)
                 actions.append(action)
-                obs, r, done, _ = env.step(action)
 
-                expert_data['expert_action'].append(action)
-                expert_data['expert_obs'].append(obs)
+                obs, r, done, _ = env.step(action)
 
                 totalr += r
                 steps += 1
@@ -73,8 +65,6 @@ def main():
                 if steps >= max_steps:
                     break
             returns.append(totalr)
-
-        save_expert_data(expert_data, args.envname)
 
         print('returns', returns)
         print('mean return', np.mean(returns))
