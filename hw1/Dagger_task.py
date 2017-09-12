@@ -1,13 +1,5 @@
 #!/usr/bin/env python
 
-"""
-Dagger code
-
-Example usage:
-    python run_expert.py experts/Humanoid-v1.pkl Humanoid-v1 --render \
-            --num_rollouts 20
-"""
-
 import pickle
 import tensorflow as tf
 import numpy as np
@@ -33,18 +25,17 @@ def main():
     parser.add_argument('envname', type=str)
     parser.add_argument('--render', action='store_true')
     parser.add_argument("--max_timesteps", type=int)
+    parser.add_argument("--dagger_iterations", type=int)
     parser.add_argument('--num_rollouts', type=int, default=20,
                         help='Number of expert roll outs')
     args = parser.parse_args()
 
-
-    f = open("expert_data/expert_data_Humanoid-v1.picke", "rb")
+    f = open("expert_data/expert_data_" + args.envname + ".picke", "rb")
     data = pickle.load(f)
 
     print("data: ", data)
     print("actions shape: ", data['actions'].shape)
     print("observations shape: ", data['observations'].shape)
-
     
     data['actions'] = np.squeeze(data['actions'], axis=1)
     print(data['actions'].shape)
@@ -52,11 +43,12 @@ def main():
     # some code inspired from
     # https://github.com/fchollet/keras/blob/master/examples/mnist_mlp.py
     model = Sequential()
-    model.add(Dense(50, activation='relu', input_shape=(376,)))
+    model.add(Dense(50, activation='relu',
+        input_shape=data['observations'][0].shape))
     model.add(Dropout(0.2))
     model.add(Dense(50, activation='relu'))
     model.add(Dropout(0.2))
-    model.add(Dense(17, activation='linear')) 
+    model.add(Dense(data['actions'][0].shape[0], activation='linear')) 
     model.summary()
     model.compile(loss='mean_squared_error',
             optimizer=RMSprop(),
@@ -71,8 +63,10 @@ def main():
     X_train, X_test, Y_train, Y_test = train_test_split(
             X, Y, test_size=0.2, random_state=42)
 
+    dagger_iterations = args.dagger_iterations or 200
     with tf.Session():
-        while True:
+        while dagger_iterations > 0:
+            dagger_iterations = dagger_iterations - 1
             # train BC
             model.fit(X_train, Y_train,
                     batch_size = 20,
@@ -120,7 +114,8 @@ def main():
                 returns.append(totalr)
 
             # and aggregate observations from BC <-> decisions from expert
-            print("Clone return: ", totalr)
+            print(args.envname + " clone mean return: ", np.mean(returns))
+            print(args.envname + " clone std return: ", np.std(returns))
 
             actions_array = np.array(actions)
             actions_array = np.squeeze(actions_array, axis=1)
