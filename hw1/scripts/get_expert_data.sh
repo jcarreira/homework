@@ -1,4 +1,4 @@
-NUM_ROLLOUTS=50
+NUM_ROLLOUTS=200
 
 python3 get_data_from_expert.py experts/Humanoid-v1.pkl Humanoid-v1  \
    --num_rollouts ${NUM_ROLLOUTS}

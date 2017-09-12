@@ -15,6 +15,11 @@ import numpy as np
 import tf_util
 import gym
 import load_policy
+import sys
+#import imp
+#
+#imp.reload(sys)
+#sys.setdefaultencoding("ISO-8859-1")
 
 def save_expert_data(data, env_name):
     with open("expert_data/expert_data_" + env_name + ".picke", 'wb') as f:
@@ -57,8 +62,6 @@ def main():
                 observations.append(obs)
                 actions.append(action)
 
-                # Humanoid task has action with dimension 17
-                #print("action shape: ", action.shape)
                 obs, r, done, _ = env.step(action)
 
                 totalr += r
