@@ -35,7 +35,18 @@ def build_mlp(
 
     with tf.variable_scope(scope):
         # YOUR_CODE_HERE
-        pass
+        network = tf.layers.dense(
+                input_placeholder,
+                len(input_placeholder))
+        for i in range(0, n_layers - 1):
+            network = tf.layers.dense(
+                    network
+                    size)
+        network = tf.layers.dense(
+                network,
+                output_size)
+
+        return network
 
 def pathlength(path):
     return len(path["reward"])
