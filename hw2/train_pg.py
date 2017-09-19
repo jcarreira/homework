@@ -152,6 +152,7 @@ def train_PG(exp_name='',
     # actions placeholder
     if discrete:
         sy_ac_na = tf.placeholder(shape=[None], name="ac", dtype=tf.int32) 
+#sy_ac_na = tf.placeholder(shape=[None], name="ac", dtype=tf.int32) 
     else:
         sy_ac_na = tf.placeholder(shape=[None, ac_dim], name="ac", dtype=tf.float32) 
 
@@ -204,10 +205,17 @@ def train_PG(exp_name='',
             sy_ob_no,    # [None, ob_dim]
             ac_dim,
             "build_network")
+        sy_sampled_ac = tf.multinomial(sy_logits_na, 1) #
 
-        sy_logprob_n_softmax = tf.nn.softmax(sy_logits_na)
-        sy_logprob_n = tf.log(sy_logprob_n_softmax) # create log probabilities
-        sy_sampled_ac = tf.multinomial(sy_logprob_n, 1) #
+        # we expand the list of actions taken with 1 dimension
+        b2 = tf.expand_dims(sy_ac_na, 1)
+        # we create [[0,0],[1,0]...]
+        range_tensor = tf.expand_dims(tf.range(tf.shape(sy_ac_na)[0]), 1)
+        # create [[0, action_taken], [1, action_taken]...]
+        ind = tf.concat([range_tensor, b2], 1)
+        # select from sy_logits_na the actions 
+        sy_logprob_n = tf.gather_nd(sy_logits_na, ind)
+
     else:
         network = build_mlp(
             sy_ob_no,    # [None, ob_dim]
@@ -226,13 +234,7 @@ def train_PG(exp_name='',
     # Loss Function and Training Operation
     #========================================================================================#
 
-    loss = tf.log
-#lik = tf.log(sy_logprob_n)
-#    loss = -tf.reduce_mean(
-#            tf.multiply(
-#                tf.gather_nd(lik, ones_zeros),
-#                sy_adv_n))
-
+    loss = -tf.reduce_sum(tf.multiply(sy_logprob_n, sy_adv_n))
     optimizer = tf.train.AdamOptimizer(learning_rate).minimize(loss)
 
     #========================================================================================#
@@ -275,34 +277,21 @@ def train_PG(exp_name='',
         # Collect paths until we have enough timesteps
         timesteps_this_batch = 0
         paths = []
-#acs_probs = []
         while True:
             ob = env.reset()
             obs, acs, rewards = [], [], []
             animate_this_episode=(len(paths)==0 and (itr % 10 == 0) and animate)
             steps = 0
             while True:
-#print("Inner iteration. step: ", steps)
                 if animate_this_episode:
                     env.render()
                     time.sleep(0.05)
                 obs.append(ob)
-                network_out = sess.run(network, feed_dict={sy_ob_no : ob[None]})
 
-                if discrete:
-                    log_softmax = sess.run(sy_logprob_n_softmax, feed_dict={sy_ob_no : ob[None]})
-
-                log = sess.run(sy_logprob_n, feed_dict={sy_ob_no : ob[None]})
                 ac = sess.run(sy_sampled_ac, feed_dict={sy_ob_no : ob[None]})
 
                 ac = ac[0]
                 ac = ac[0]
-                
-#ac_prob = [0, 0]
-#                ac_prob[ac] = 1
-
-#                acs_probs.append([steps, int(ac)])
-#acs_probs.append(ac_prob)
                 acs.append(ac)
 
                 ob, rew, done, _ = env.step(ac)
@@ -315,7 +304,6 @@ def train_PG(exp_name='',
                     "action" : np.array(acs)}
             paths.append(path)
             timesteps_this_batch += pathlength(path)
-            break
             if timesteps_this_batch > min_timesteps_per_batch:
                 break
         total_timesteps += timesteps_this_batch
@@ -385,12 +373,16 @@ def train_PG(exp_name='',
             for t in reversed(range(0, r.size)):
                 running_add = running_add * gamma + r[t]
                 discounted_r[t] = running_add
-            return running_add
+            return [running_add] * discounted_r.shape[0]
 
         if reward_to_go:
-            q_n = np.array([discounted_rewards(x['reward']) for x in paths])
+#            for path in paths:
+#                print("discounted reward: ", discounted_rewards(path['reward']))
+            q_n = np.concatenate([discounted_rewards(x['reward']) for x in paths])
         else:
-            q_n = np.array([discounted_rewards(x['reward']) for x in paths])
+#            for path in paths:
+#                print("discounted reward: ", discounted_rewards(path['reward']))
+            q_n = np.concatenate([discounted_rewards(x['reward']) for x in paths])
 
         #====================================================================================#
         #                           ----------SECTION 5----------
@@ -454,9 +446,9 @@ def train_PG(exp_name='',
 
         print("# paths: ", len(paths))
 
-        obs = np.array(obs)
-        acs = np.array(acs)
-        acs_probs = np.array(acs_probs)
+#        obs = np.array(obs)
+#acs = np.array(acs)
+#acs_probs = np.array(acs_probs)
 #        print("adv_n: ", adv_n)
 #        print("adv_n shape: ", adv_n.shape)
 #        print("acs_probs: ", acs_probs)
@@ -466,14 +458,52 @@ def train_PG(exp_name='',
 #                sy_adv_n : adv_n[0],
 #                })
          
-#print("matmul shape: ", tf.shape(tf.matmul(lik, ones_zeros)))
+  
+        print("ac_na shape: ", ac_na.shape) 
+        print("adv_n shape: ", adv_n.shape) 
+        print("ob_no shape: ", ob_no.shape) 
+#loss = -tf.reduce_sum(tf.log(tf.multiply(sy_logprob_n, sy_adv_n)))
+        print("multiply: ", 
+               sess.run(tf.multiply(sy_logprob_n, sy_adv_n),
+                feed_dict = {
+                sy_ob_no : ob_no,
+                sy_adv_n : adv_n,
+                sy_ac_na : ac_na # indicates which entry of the logprobs to take
+                }))
+#        print("log: ", 
+#               sess.run(tf.log(tf.multiply(sy_logprob_n, sy_adv_n)),
+#                feed_dict = {
+#                sy_ob_no : ob_no,
+#                sy_adv_n : adv_n,
+#                sy_ac_na : ac_na # indicates which entry of the logprobs to take
+#                }))
+        print("loss: : ", 
+               sess.run(loss,
+                feed_dict = {
+                sy_ob_no : ob_no,
+                sy_adv_n : adv_n,
+                sy_ac_na : ac_na # indicates which entry of the logprobs to take
+                }))
+        print("sy_logprob_n shape: ", 
+               sess.run(tf.shape(sy_logprob_n),
+                feed_dict = {
+                sy_ob_no : ob_no,
+                sy_adv_n : adv_n,
+                sy_ac_na : ac_na # indicates which entry of the logprobs to take
+                }))
+        print("sy_adv_n shape: ", 
+               sess.run(tf.shape(sy_adv_n),
+                feed_dict = {
+                sy_ob_no : ob_no,
+                sy_adv_n : adv_n,
+                sy_ac_na : ac_na # indicates which entry of the logprobs to take
+                }))
 
         sess.run(optimizer, 
                 feed_dict = {
-                sy_ob_no : obs,
+                sy_ob_no : ob_no,
                 sy_adv_n : adv_n,
-#                ones_zeros : acs_probs
-#ones_zeros : np.transpose(acs_probs)
+                sy_ac_na : ac_na # indicates which entry of the logprobs to take
                 })
 
 
