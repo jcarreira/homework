@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import inspect
+from sklearn.preprocessing import scale
 from multiprocessing import Process
 
 #============================================================================================#
@@ -152,7 +153,6 @@ def train_PG(exp_name='',
     # actions placeholder
     if discrete:
         sy_ac_na = tf.placeholder(shape=[None], name="ac", dtype=tf.int32) 
-#sy_ac_na = tf.placeholder(shape=[None], name="ac", dtype=tf.int32) 
     else:
         sy_ac_na = tf.placeholder(shape=[None, ac_dim], name="ac", dtype=tf.float32) 
 
@@ -367,21 +367,21 @@ def train_PG(exp_name='',
         #====================================================================================#
 
         # from web
-        def discounted_rewards(r):
+        def discounted_rewards(r, reward_to_go = False):
             discounted_r = np.zeros_like(r)
             running_add = 0
             for t in reversed(range(0, r.size)):
                 running_add = running_add * gamma + r[t]
                 discounted_r[t] = running_add
-            return [running_add] * discounted_r.shape[0]
+
+            if reward_to_go == True:
+                return discounted_r
+            else:
+                return [running_add] * discounted_r.shape[0]
 
         if reward_to_go:
-#            for path in paths:
-#                print("discounted reward: ", discounted_rewards(path['reward']))
-            q_n = np.concatenate([discounted_rewards(x['reward']) for x in paths])
+            q_n = np.concatenate([discounted_rewards(x['reward'], True) for x in paths])
         else:
-#            for path in paths:
-#                print("discounted reward: ", discounted_rewards(path['reward']))
             q_n = np.concatenate([discounted_rewards(x['reward']) for x in paths])
 
         #====================================================================================#
@@ -411,8 +411,7 @@ def train_PG(exp_name='',
         if normalize_advantages:
             # On the next line, implement a trick which is known empirically to reduce variance
             # in policy gradient methods: normalize adv_n to have mean zero and std=1. 
-            # YOUR_CODE_HERE
-            pass
+            adv_n = scale(adv_n)
 
 
         #====================================================================================#
