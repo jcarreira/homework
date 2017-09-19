@@ -205,7 +205,7 @@ def train_PG(exp_name='',
             sy_ob_no,    # [None, ob_dim]
             ac_dim,
             "build_network")
-        sy_sampled_ac = tf.multinomial(sy_logits_na, 1) #
+        sy_sampled_ac = tf.multinomial(sy_logits_na, 1)
 
         # we expand the list of actions taken with 1 dimension
         b2 = tf.expand_dims(sy_ac_na, 1)
@@ -214,7 +214,7 @@ def train_PG(exp_name='',
         # create [[0, action_taken], [1, action_taken]...]
         ind = tf.concat([range_tensor, b2], 1)
         # select from sy_logits_na the actions 
-        sy_logprob_n = tf.gather_nd(sy_logits_na, ind)
+        sy_logprob_n = tf.gather_nd(tf.log(tf.nn.softmax(sy_logits_na)), ind)
 
     else:
         network = build_mlp(
@@ -234,7 +234,7 @@ def train_PG(exp_name='',
     # Loss Function and Training Operation
     #========================================================================================#
 
-    loss = -tf.reduce_sum(tf.multiply(sy_logprob_n, sy_adv_n))
+    loss = -tf.reduce_mean(tf.multiply(sy_logprob_n, sy_adv_n))
     optimizer = tf.train.AdamOptimizer(learning_rate).minimize(loss)
 
     #========================================================================================#
@@ -477,6 +477,27 @@ def train_PG(exp_name='',
 #                sy_adv_n : adv_n,
 #                sy_ac_na : ac_na # indicates which entry of the logprobs to take
 #                }))
+        print("sy_sampled_ac: : ", 
+               sess.run(sy_sampled_ac,
+                feed_dict = {
+                sy_ob_no : ob_no,
+                sy_adv_n : adv_n,
+                sy_ac_na : ac_na # indicates which entry of the logprobs to take
+                }))
+        print("sy_logits_na: : ", 
+               sess.run(sy_logits_na,
+                feed_dict = {
+                sy_ob_no : ob_no,
+                sy_adv_n : adv_n,
+                sy_ac_na : ac_na # indicates which entry of the logprobs to take
+                }))
+        print("sy_logprob_n: : ", 
+               sess.run(sy_logprob_n,
+                feed_dict = {
+                sy_ob_no : ob_no,
+                sy_adv_n : adv_n,
+                sy_ac_na : ac_na # indicates which entry of the logprobs to take
+                }))
         print("loss: : ", 
                sess.run(loss,
                 feed_dict = {
