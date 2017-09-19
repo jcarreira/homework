@@ -75,7 +75,7 @@ def train_PG(exp_name='',
              max_path_length=None,
              learning_rate=5e-3, 
              reward_to_go=True, 
-             animate=True, 
+             animate=False, 
              logdir=None, 
              normalize_advantages=True,
              nn_baseline=False, 
@@ -157,6 +157,7 @@ def train_PG(exp_name='',
 
     # Define a placeholder for advantages
     sy_adv_n = tf.placeholder(shape=[None], name="sy_adv_n", dtype=tf.float32)
+    ones_zeros = tf.placeholder(shape=[None, 2], name="ones_zeros", dtype=tf.int32)
 
 
     #========================================================================================#
@@ -199,15 +200,14 @@ def train_PG(exp_name='',
     #========================================================================================#
    
     if discrete:
-        network = build_mlp(
+        sy_logits_na = build_mlp(
             sy_ob_no,    # [None, ob_dim]
             ac_dim,
             "build_network")
-        # logits
-        sy_logprob_n_softmax = tf.nn.softmax(network)
-        sy_logprob_n = tf.log(sy_logprob_n_softmax) # create logits
+
+        sy_logprob_n_softmax = tf.nn.softmax(sy_logits_na)
+        sy_logprob_n = tf.log(sy_logprob_n_softmax) # create log probabilities
         sy_sampled_ac = tf.multinomial(sy_logprob_n, 1) #
-        # sy_logits_na = TODO
     else:
         network = build_mlp(
             sy_ob_no,    # [None, ob_dim]
@@ -226,17 +226,14 @@ def train_PG(exp_name='',
     # Loss Function and Training Operation
     #========================================================================================#
 
-#tf_y = tf.placeholder(tf.float32, [None, 2], name = "tf_y")
-    lik = tf.log(sy_logprob_n)
-#loglik = tf.log(tf_y * (tf_y - sy_logprob_n) + (1 - tf_y) * (tf_y + sy_logprob_n))
-#loglik = tf.log(tf_y * (tf_y - sy_logprob_n) + (1 - tf_y) * (tf_y + sy_logprob_n))
-    loss = -tf.reduce_mean(tf.reduce_sum(lik) * sy_adv_n)
-#loss = -tf.reduce_mean(loglik * sy_adv_n)
-
-    grads = tf.gradients(loss, tf.trainable_variables())
+    loss = tf.log
+#lik = tf.log(sy_logprob_n)
+#    loss = -tf.reduce_mean(
+#            tf.multiply(
+#                tf.gather_nd(lik, ones_zeros),
+#                sy_adv_n))
 
     optimizer = tf.train.AdamOptimizer(learning_rate).minimize(loss)
-#update_gradient = optimizer.apply_gradients(tf.trainable_variables())
 
     #========================================================================================#
     #                           ----------SECTION 5----------
@@ -278,13 +275,14 @@ def train_PG(exp_name='',
         # Collect paths until we have enough timesteps
         timesteps_this_batch = 0
         paths = []
+#acs_probs = []
         while True:
             ob = env.reset()
             obs, acs, rewards = [], [], []
-            acs_probs = []
             animate_this_episode=(len(paths)==0 and (itr % 10 == 0) and animate)
             steps = 0
             while True:
+#print("Inner iteration. step: ", steps)
                 if animate_this_episode:
                     env.render()
                     time.sleep(0.05)
@@ -293,21 +291,18 @@ def train_PG(exp_name='',
 
                 if discrete:
                     log_softmax = sess.run(sy_logprob_n_softmax, feed_dict={sy_ob_no : ob[None]})
-#print("log_softmax: ", log_softmax)
 
                 log = sess.run(sy_logprob_n, feed_dict={sy_ob_no : ob[None]})
                 ac = sess.run(sy_sampled_ac, feed_dict={sy_ob_no : ob[None]})
 
-#                print("network_output: ", network_out)
-#                print("log: ", log)
                 ac = ac[0]
-#                print("ac: ", ac)
-#                print("ac shape: ", ac.shape)
                 ac = ac[0]
                 
-                ac_prob = [0, 0]
-                ac_prob[ac] = 1
-                acs_probs.append(ac_prob)
+#ac_prob = [0, 0]
+#                ac_prob[ac] = 1
+
+#                acs_probs.append([steps, int(ac)])
+#acs_probs.append(ac_prob)
                 acs.append(ac)
 
                 ob, rew, done, _ = env.step(ac)
@@ -320,6 +315,7 @@ def train_PG(exp_name='',
                     "action" : np.array(acs)}
             paths.append(path)
             timesteps_this_batch += pathlength(path)
+            break
             if timesteps_this_batch > min_timesteps_per_batch:
                 break
         total_timesteps += timesteps_this_batch
@@ -389,7 +385,7 @@ def train_PG(exp_name='',
             for t in reversed(range(0, r.size)):
                 running_add = running_add * gamma + r[t]
                 discounted_r[t] = running_add
-            return discounted_r
+            return running_add
 
         if reward_to_go:
             q_n = np.array([discounted_rewards(x['reward']) for x in paths])
@@ -456,22 +452,28 @@ def train_PG(exp_name='',
         # For debug purposes, you may wish to save the value of the loss function before
         # and after an update, and then log them below. 
 
+        print("# paths: ", len(paths))
+
         obs = np.array(obs)
-#print("obs shape: ", obs.shape)
-#print("adv_n shape: ", adv_n.shape)
         acs = np.array(acs)
         acs_probs = np.array(acs_probs)
-#        print("acs shape: ", acs.shape)
+#        print("adv_n: ", adv_n)
+#        print("adv_n shape: ", adv_n.shape)
+#        print("acs_probs: ", acs_probs)
 #        print("acs_probs shape: ", acs_probs.shape)
-        # YOUR_CODE_HERE
-        gradient = sess.run(grads, feed_dict = {
-                sy_ob_no : obs,
-                sy_adv_n : adv_n[0],
-                })
+#        gradient = sess.run(grads, feed_dict = {
+#                sy_ob_no : obs,
+#                sy_adv_n : adv_n[0],
+#                })
+         
+#print("matmul shape: ", tf.shape(tf.matmul(lik, ones_zeros)))
 
-        sess.run(optimizer, feed_dict = {
+        sess.run(optimizer, 
+                feed_dict = {
                 sy_ob_no : obs,
-                sy_adv_n : adv_n[0],
+                sy_adv_n : adv_n,
+#                ones_zeros : acs_probs
+#ones_zeros : np.transpose(acs_probs)
                 })
 
 
