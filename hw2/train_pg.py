@@ -4,6 +4,7 @@ import gym
 import logz
 import scipy.signal
 import os
+import sys
 import time
 import inspect
 from multiprocessing import Process
@@ -12,6 +13,7 @@ from multiprocessing import Process
 # Utilities
 #============================================================================================#
 
+# here we create our function approximator
 def build_mlp(
         input_placeholder, 
         output_size,
@@ -21,6 +23,11 @@ def build_mlp(
         activation=tf.tanh,
         output_activation=None
         ):
+
+    print("Building mlp")
+    print("input_placeholder: ", input_placeholder.shape)
+    print("output_size: ", output_size)
+    print("scope: ", scope)
     #========================================================================================#
     #                           ----------SECTION 3----------
     # Network building
@@ -37,14 +44,17 @@ def build_mlp(
         # YOUR_CODE_HERE
         network = tf.layers.dense(
                 input_placeholder,
-                len(input_placeholder))
+                input_placeholder.shape[1],
+                activation)
         for i in range(0, n_layers - 1):
             network = tf.layers.dense(
-                    network
-                    size)
+                    network,
+                    size,
+                    activation)
         network = tf.layers.dense(
                 network,
-                output_size)
+                output_size,
+                activation)
 
         return network
 
@@ -59,7 +69,7 @@ def pathlength(path):
 
 def train_PG(exp_name='',
              env_name='CartPole-v0',
-             n_iter=100, 
+             n_iter=10000, 
              gamma=1.0, 
              min_timesteps_per_batch=1000, 
              max_path_length=None,
@@ -96,6 +106,8 @@ def train_PG(exp_name='',
     # Is this env continuous, or discrete?
     discrete = isinstance(env.action_space, gym.spaces.Discrete)
 
+    print("is discrete: ", discrete)
+
     # Maximum length for episodes
     max_path_length = max_path_length or env.spec.max_episode_steps
 
@@ -120,6 +132,9 @@ def train_PG(exp_name='',
     ob_dim = env.observation_space.shape[0]
     ac_dim = env.action_space.n if discrete else env.action_space.shape[0]
 
+    print("ob_dim: ", ob_dim)
+    print("ac_dim: ", ac_dim)
+
     #========================================================================================#
     #                           ----------SECTION 4----------
     # Placeholders
@@ -127,14 +142,21 @@ def train_PG(exp_name='',
     # Need these for batch observations / actions / advantages in policy gradient loss function.
     #========================================================================================#
 
+    # sy_ob_no: observations
+    # sy_ac_na: actions
+    # sy_adv_n: advantages
+
+    # observations placeholder
     sy_ob_no = tf.placeholder(shape=[None, ob_dim], name="ob", dtype=tf.float32)
+
+    # actions placeholder
     if discrete:
         sy_ac_na = tf.placeholder(shape=[None], name="ac", dtype=tf.int32) 
     else:
         sy_ac_na = tf.placeholder(shape=[None, ac_dim], name="ac", dtype=tf.float32) 
 
     # Define a placeholder for advantages
-    sy_adv_n = TODO
+    sy_adv_n = tf.placeholder(shape=[None], name="sy_adv_n", dtype=tf.float32)
 
 
     #========================================================================================#
@@ -175,20 +197,28 @@ def train_PG(exp_name='',
     #      policy network output ops.
     #   
     #========================================================================================#
-
+   
     if discrete:
-        # YOUR_CODE_HERE
-        sy_logits_na = TODO
-        sy_sampled_ac = TODO # Hint: Use the tf.multinomial op
-        sy_logprob_n = TODO
-
+        network = build_mlp(
+            sy_ob_no,    # [None, ob_dim]
+            ac_dim,
+            "build_network")
+        # logits
+        sy_logprob_n_softmax = tf.nn.softmax(network)
+        sy_logprob_n = tf.log(sy_logprob_n_softmax) # create logits
+        sy_sampled_ac = tf.multinomial(sy_logprob_n, 1) #
+        # sy_logits_na = TODO
     else:
-        # YOUR_CODE_HERE
-        sy_mean = TODO
-        sy_logstd = TODO # logstd should just be a trainable variable, not a network output.
-        sy_sampled_ac = TODO
-        sy_logprob_n = TODO  # Hint: Use the log probability under a multivariate gaussian. 
-
+        network = build_mlp(
+            sy_ob_no,    # [None, ob_dim]
+            1, # just returns the mean
+            "build_network")
+        sy_mean = network[0]
+        sy_logstd = tf.get_variable("logstd", [ac_dim])
+        sy_logstd_eye = tf.eye(ac_dim)
+        sy_sampled_ac = sy_mean + \
+                        tf.matmul(tf.square(tf.exp(sy_logstd_eye)), tf.random_normal([ac_dim, ac_dim]))
+        sy_logprob_n = tf.log(sy_sampled_ac)
 
 
     #========================================================================================#
@@ -196,9 +226,17 @@ def train_PG(exp_name='',
     # Loss Function and Training Operation
     #========================================================================================#
 
-    loss = TODO # Loss function that we'll differentiate to get the policy gradient.
-    update_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
+#tf_y = tf.placeholder(tf.float32, [None, 2], name = "tf_y")
+    lik = tf.log(sy_logprob_n)
+#loglik = tf.log(tf_y * (tf_y - sy_logprob_n) + (1 - tf_y) * (tf_y + sy_logprob_n))
+#loglik = tf.log(tf_y * (tf_y - sy_logprob_n) + (1 - tf_y) * (tf_y + sy_logprob_n))
+    loss = -tf.reduce_mean(tf.reduce_sum(lik) * sy_adv_n)
+#loss = -tf.reduce_mean(loglik * sy_adv_n)
 
+    grads = tf.gradients(loss, tf.trainable_variables())
+
+    optimizer = tf.train.AdamOptimizer(learning_rate).minimize(loss)
+#update_gradient = optimizer.apply_gradients(tf.trainable_variables())
 
     #========================================================================================#
     #                           ----------SECTION 5----------
@@ -228,8 +266,6 @@ def train_PG(exp_name='',
     sess.__enter__() # equivalent to `with sess:`
     tf.global_variables_initializer().run() #pylint: disable=E1101
 
-
-
     #========================================================================================#
     # Training Loop
     #========================================================================================#
@@ -245,6 +281,7 @@ def train_PG(exp_name='',
         while True:
             ob = env.reset()
             obs, acs, rewards = [], [], []
+            acs_probs = []
             animate_this_episode=(len(paths)==0 and (itr % 10 == 0) and animate)
             steps = 0
             while True:
@@ -252,9 +289,27 @@ def train_PG(exp_name='',
                     env.render()
                     time.sleep(0.05)
                 obs.append(ob)
+                network_out = sess.run(network, feed_dict={sy_ob_no : ob[None]})
+
+                if discrete:
+                    log_softmax = sess.run(sy_logprob_n_softmax, feed_dict={sy_ob_no : ob[None]})
+#print("log_softmax: ", log_softmax)
+
+                log = sess.run(sy_logprob_n, feed_dict={sy_ob_no : ob[None]})
                 ac = sess.run(sy_sampled_ac, feed_dict={sy_ob_no : ob[None]})
+
+#                print("network_output: ", network_out)
+#                print("log: ", log)
                 ac = ac[0]
+#                print("ac: ", ac)
+#                print("ac shape: ", ac.shape)
+                ac = ac[0]
+                
+                ac_prob = [0, 0]
+                ac_prob[ac] = 1
+                acs_probs.append(ac_prob)
                 acs.append(ac)
+
                 ob, rew, done, _ = env.step(ac)
                 rewards.append(rew)
                 steps += 1
@@ -327,8 +382,19 @@ def train_PG(exp_name='',
         #
         #====================================================================================#
 
-        # YOUR_CODE_HERE
-        q_n = TODO
+        # from web
+        def discounted_rewards(r):
+            discounted_r = np.zeros_like(r)
+            running_add = 0
+            for t in reversed(range(0, r.size)):
+                running_add = running_add * gamma + r[t]
+                discounted_r[t] = running_add
+            return discounted_r
+
+        if reward_to_go:
+            q_n = np.array([discounted_rewards(x['reward']) for x in paths])
+        else:
+            q_n = np.array([discounted_rewards(x['reward']) for x in paths])
 
         #====================================================================================#
         #                           ----------SECTION 5----------
@@ -390,7 +456,23 @@ def train_PG(exp_name='',
         # For debug purposes, you may wish to save the value of the loss function before
         # and after an update, and then log them below. 
 
+        obs = np.array(obs)
+#print("obs shape: ", obs.shape)
+#print("adv_n shape: ", adv_n.shape)
+        acs = np.array(acs)
+        acs_probs = np.array(acs_probs)
+#        print("acs shape: ", acs.shape)
+#        print("acs_probs shape: ", acs_probs.shape)
         # YOUR_CODE_HERE
+        gradient = sess.run(grads, feed_dict = {
+                sy_ob_no : obs,
+                sy_adv_n : adv_n[0],
+                })
+
+        sess.run(optimizer, feed_dict = {
+                sy_ob_no : obs,
+                sy_adv_n : adv_n[0],
+                })
 
 
         # Log diagnostics
@@ -417,7 +499,7 @@ def main():
     parser.add_argument('--exp_name', type=str, default='vpg')
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--discount', type=float, default=1.0)
-    parser.add_argument('--n_iter', '-n', type=int, default=100)
+    parser.add_argument('--n_iter', '-n', type=int, default=10000)
     parser.add_argument('--batch_size', '-b', type=int, default=1000)
     parser.add_argument('--ep_len', '-ep', type=float, default=-1.)
     parser.add_argument('--learning_rate', '-lr', type=float, default=5e-3)
