@@ -70,7 +70,7 @@ def pathlength(path):
 
 def train_PG(exp_name='',
              env_name='CartPole-v0',
-             n_iter=10000, 
+             n_iter=100, 
              gamma=1.0, 
              min_timesteps_per_batch=1000, 
              max_path_length=None,
@@ -150,12 +150,10 @@ def train_PG(exp_name='',
     if discrete:
         sy_ac_na = tf.placeholder(shape=[None], name="ac", dtype=tf.int32) 
     else:
-        sy_ac_na = tf.placeholder(shape=[None], name="ac", dtype=tf.float32) 
-#sy_ac_na = tf.placeholder(shape=[None, ac_dim], name="ac", dtype=tf.float32) 
+        sy_ac_na = tf.placeholder(shape=[None, ac_dim], name="ac", dtype=tf.float32) 
 
     # Define a placeholder for advantages
     sy_adv_n = tf.placeholder(shape=[None], name="sy_adv_n", dtype=tf.float32)
-    ones_zeros = tf.placeholder(shape=[None, 2], name="ones_zeros", dtype=tf.int32)
 
 
     #========================================================================================#
@@ -214,52 +212,22 @@ def train_PG(exp_name='',
         sy_logprob_n = tf.gather_nd(tf.log(tf.nn.softmax(sy_logits_na)), ind)
 
     else:
-        network = build_mlp(
+        sy_mean = build_mlp(
             sy_ob_no,    # [None, ob_dim]
-            1, # just returns the mean
-            "build_network")
-        sy_mean = network[0]
+            ac_dim, # just returns the mean
+            "build_network",
+            3)
         sy_logstd = tf.get_variable("logstd", [ac_dim], dtype = tf.float32)
 
-        # v1        
-#        dist = tf.contrib.distributions.MultivariateNormalDiag(sy_mean, scale_diag = tf.exp(sy_logstd))
-#        sy_sampled_ac = dist.sample([1])
-#        sy_logprob_n = dist.log_prob(sy_ac_na)
-
-# -1/2 log(|sigma|) = - sum_i log std
         reduce_stds = -tf.reduce_sum(sy_logstd)
         reduce_sqs = tf.multiply(tf.constant(-0.5),
                           tf.reduce_sum(tf.square(
-                          tf.divide(tf.subtract(sy_mean, sy_ac_na), tf.exp(sy_logstd)))))
+                          tf.divide(tf.subtract(sy_mean, sy_ac_na),
+                                    tf.exp(sy_logstd))), axis=1))
         sy_logprob_n = tf.add(reduce_stds, reduce_sqs)
-##v2
-#        sigma = tf.square(tf.exp(tf.diag(sy_logstd)))
-#        sy_logprob_n = -tf.log(tf.matrix_determinant(sigma)) - \
-#                       tf.matmul(
-#                           tf.matmul(tf.transpose(sy_mean-sy_ac_na), tf.matrix_inverse(sigma)),
-#                           (sy_mean-sy_ac_na))
 
-        # v3. univariate gaussian
-#        sigma = tf.square(tf.exp(sy_logstd))
-#        sigma_value = sigma
-#        sy_logprob_n = tf.subtract(
-#                          tf.multiply(tf.constant(-0.5), tf.log(2*3.14 *sigma_value)),
-#                              tf.divide(
-#                                tf.square(tf.subtract(sy_mean, sy_ac_na)),
-#                                2*sigma_value))
-#
-
-        sy_sampled_ac = \
-            sy_mean + tf.exp(sy_logstd) * tf.random_normal(tf.shape(sy_mean))
-#        sy_sampled_ac = tf.add(sy_mean, \
-#                        tf.matmul(tf.exp(tf.diag(sy_logstd)), tf.random_normal([ac_dim, ac_dim])))
-
-
-                       
-
-
-#
-#        dist = tf.contrib.distributions.MultivariateNormalDiag(sy_mean, sy_logstd)
+        sy_sampled_ac = sy_mean + tf.exp(sy_logstd) * \
+                               tf.random_normal(tf.shape(sy_mean))
 
     #========================================================================================#
     #                           ----------SECTION 4----------
@@ -284,7 +252,9 @@ def train_PG(exp_name='',
         # Define placeholders for targets, a loss function and an update op for fitting a 
         # neural network baseline. These will be used to fit the neural network baseline. 
         # YOUR_CODE_HERE
-        baseline_update_op = TODO
+        sy_b_n = tf.placeholder(shape=[None], name="val", dtype=tf.float32)
+        baseline_loss = tf.nn.l2_loss(sy_b_n - baseline_prediction)
+        baseline_update_op = tf.train.AdamOptimizer(learning_rate).minimize(baseline_loss)
 
 
     #========================================================================================#
@@ -321,9 +291,10 @@ def train_PG(exp_name='',
                 obs.append(ob)
 
                 ac = sess.run(sy_sampled_ac, feed_dict={sy_ob_no : ob[None]})
+#                print("ac: ", ac)
 
                 ac = ac[0]
-#ac = ac[0]
+#                ac = ac[0]
                 acs.append(ac)
 
                 ob, rew, done, _ = env.step(ac)
@@ -425,12 +396,11 @@ def train_PG(exp_name='',
             # If nn_baseline is True, use your neural network to predict reward-to-go
             # at each timestep for each trajectory, and save the result in a variable 'b_n'
             # like 'ob_no', 'ac_na', and 'q_n'.
-            #
             # Hint #bl1: rescale the output from the nn_baseline to match the statistics
             # (mean and std) of the current or previous batch of Q-values. (Goes with Hint
             # #bl2 below.)
 
-            b_n = TODO
+            b_n = (baseline_prediction * q_n.std()) + q_n.mean()
             adv_n = q_n - b_n
         else:
             adv_n = q_n.copy()
@@ -440,11 +410,12 @@ def train_PG(exp_name='',
         # Advantage Normalization
         #====================================================================================#
 
-        if False: #normalize_advantages:
+        if normalize_advantages:
             # On the next line, implement a trick which is known empirically to reduce variance
             # in policy gradient methods: normalize adv_n to have mean zero and std=1. 
-            adv_n = scale(adv_n)
-
+            adv_std = np.std(adv_n) + 1e-8
+            adv_mean = np.mean(adv_n)
+            adv_n = (adv_n - adv_mean) / adv_std
 
         #====================================================================================#
         #                           ----------SECTION 5----------
@@ -454,24 +425,19 @@ def train_PG(exp_name='',
             # ----------SECTION 5----------
             # If a neural network baseline is used, set up the targets and the inputs for the 
             # baseline. 
-            # 
             # Fit it to the current batch in order to use for the next iteration. Use the 
             # baseline_update_op you defined earlier.
-            #
             # Hint #bl2: Instead of trying to target raw Q-values directly, rescale the 
             # targets to have mean zero and std=1. (Goes with Hint #bl1 above.)
 
-            # YOUR_CODE_HERE
-            pass
+            sess.run(baseline_update_op, feed_dict={sy_ob_no : ob[None]})
 
         #====================================================================================#
         #                           ----------SECTION 4----------
         # Performing the Policy Update
         #====================================================================================#
-
         # Call the update operation necessary to perform the policy gradient update based on 
         # the current batch of rollouts.
-        # 
         # For debug purposes, you may wish to save the value of the loss function before
         # and after an update, and then log them below. 
 
@@ -480,109 +446,6 @@ def train_PG(exp_name='',
         print("adv_n shape: ", adv_n.shape) 
         print("ob_no shape: ", ob_no.shape) 
         
-#        print("sy_sampled_ac: ", 
-#               sess.run(sy_sampled_ac,
-#                feed_dict = {
-#                    sy_ob_no : ob_no,
-#                    sy_adv_n : adv_n,
-#                    sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                }))
-#        if discrete:
-#            print("sy_logits_na: ", 
-#                   sess.run(sy_logits_na,
-#                    feed_dict = {
-#                        sy_ob_no : ob_no,
-#                        sy_adv_n : adv_n,
-#                        sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                    }))
-#        if not discrete:
-##sy_sampled_ac = sy_mean + \
-##                        tf.matmul(tf.square(tf.exp(sy_logstd_matrix)), tf.random_normal([ac_dim, ac_dim]))
-#            print("sy_mean: ", 
-#                   sess.run(sy_mean,
-#                    feed_dict = {
-#                        sy_ob_no : ob_no,
-#                        sy_adv_n : adv_n,
-#                        sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                    }))
-#            print("sy_logstd: ", 
-#                   sess.run(sy_logstd,
-#                    feed_dict = {
-#                        sy_ob_no : ob_no,
-#                        sy_adv_n : adv_n,
-#                        sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                    }))
-#            print("sigma: ", 
-#                   sess.run(sigma,
-#                    feed_dict = {
-#                        sy_ob_no : ob_no,
-#                        sy_adv_n : adv_n,
-#                        sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                    }))
-#            print("tf.random_normal: ",
-#                   sess.run(tf.random_normal([ac_dim, ac_dim]),
-#                    feed_dict = {
-#                        sy_ob_no : ob_no,
-#                        sy_adv_n : adv_n,
-#                        sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                    }))
-#            print("tf subtract: ", 
-#                   sess.run(tf.subtract(sy_mean, sy_ac_na),
-#                    feed_dict = {
-#                        sy_ob_no : ob_no,
-#                        sy_adv_n : adv_n,
-#                        sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                    }))
-#            print("tf subtract shape: ", 
-#                   sess.run(tf.shape(tf.subtract(sy_mean, sy_ac_na)),
-#                    feed_dict = {
-#                        sy_ob_no : ob_no,
-#                        sy_adv_n : adv_n,
-#                        sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                    }))
-#        print("sy_ac_na: ", 
-#               sess.run(sy_ac_na,
-#                feed_dict = {
-#                    sy_ob_no : ob_no,
-#                    sy_adv_n : adv_n,
-#                    sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                }))
-#        print("sy_logprob_n shape: ", 
-#               sess.run(tf.shape(sy_logprob_n),
-#                feed_dict = {
-#                    sy_ob_no : ob_no,
-#                    sy_adv_n : adv_n,
-#                    sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                }))
-#        print("sy_logprob_n: ", 
-#               sess.run(sy_logprob_n,
-#                feed_dict = {
-#                    sy_ob_no : ob_no,
-#                    sy_adv_n : adv_n,
-#                    sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                }))
-#        print("adv_n: ", adv_n)
-#        print("sy_adv_n shape: ", 
-#               sess.run(tf.shape(sy_adv_n),
-#                feed_dict = {
-#                    sy_ob_no : ob_no,
-#                    sy_adv_n : adv_n,
-#                    sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                }))
-#        print("sy_adv_n: ", 
-#               sess.run(sy_adv_n,
-#                feed_dict = {
-#                    sy_ob_no : ob_no,
-#                    sy_adv_n : adv_n,
-#                    sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                }))
-#        print("multiply: ", 
-#               sess.run(tf.multiply(sy_logprob_n, sy_adv_n),
-#                feed_dict = {
-#                    sy_ob_no : ob_no,
-#                    sy_adv_n : adv_n,
-#                    sy_ac_na : ac_na # indicates which entry of the logprobs to take
-#                }))
         print("loss: ", 
                sess.run(loss,
                 feed_dict = {
@@ -623,7 +486,7 @@ def main():
     parser.add_argument('--exp_name', type=str, default='vpg')
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--discount', type=float, default=1.0)
-    parser.add_argument('--n_iter', '-n', type=int, default=10000)
+    parser.add_argument('--n_iter', '-n', type=int, default=100)
     parser.add_argument('--batch_size', '-b', type=int, default=1000)
     parser.add_argument('--ep_len', '-ep', type=float, default=-1.)
     parser.add_argument('--learning_rate', '-lr', type=float, default=5e-3)
