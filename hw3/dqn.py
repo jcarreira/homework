@@ -10,6 +10,16 @@ from dqn_utils import *
 
 OptimizerSpec = namedtuple("OptimizerSpec", ["constructor", "kwargs", "lr_schedule"])
 
+EPS_THRESHOLD = 0.99
+
+def select_action(session, fn, state, num_actions):
+    rnd = np.random.uniform(0, 1.0)
+    if rnd > EPS_THRESHOLD:
+        return np.random.randint(0, num_actions)
+    else:
+        vs = session.run(fn, feed_dict = {state}) # shape [num_actions]
+        return np.argmax(vs)
+
 def learn(env,
           q_func,
           optimizer_spec,
@@ -76,6 +86,9 @@ def learn(env,
     """
     assert type(env.observation_space) == gym.spaces.Box
     assert type(env.action_space)      == gym.spaces.Discrete
+    
+    print("FIXXXXX")
+    replay_buffer_size=10000
 
     ###############
     # BUILD MODEL #
@@ -126,10 +139,24 @@ def learn(env,
     # q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='q_func')
     # Older versions of TensorFlow may require using "VARIABLES" instead of "GLOBAL_VARIABLES"
     ######
-    
-    # YOUR CODE HERE
+
+
+
+
+    # create q_values output from model
+    state_action_values = q_func(obs_t_float, num_actions, "q_func_vars", False) # shape: [None, num_actions]
+    # compute next q values = r + max q'
+    next_state_values = q_func(obs_tp1_float, num_actions, "target_q_func_vars", False) # shape: [None, num_actions]
+    expected_state_action_values = next_state_values * gamma + rew_t_ph
+    total_error = state_action_values - expected_state_action_values
+
+    q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = 'q_func_vars')
+    target_q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = 'target_q_func_vars')
 
     ######
+
+
+
 
     # construct optimization op (with gradient clipping)
     learning_rate = tf.placeholder(tf.float32, (), name="learning_rate")
@@ -194,7 +221,30 @@ def learn(env,
 
         #####
         
+
+
+
         # YOUR CODE HERE
+        idx = replay_buffer.store_frame(last_obs)
+
+        frame = replay_buffer.encode_recent_observation()
+        action = select_action(session, q_func, frame, num_actions)
+
+        obs, reward, done, info = env.step(action)
+
+        if not done:
+            next_state = obs - last_obs
+
+        replay_buffer.store_effect(idx, action, reward, done)
+
+        last_obs = obs # this should go at the end
+        if done:
+            last_obs = env.reset()
+
+
+
+
+
 
         #####
 
@@ -245,6 +295,27 @@ def learn(env,
             #####
             
             # YOUR CODE HERE
+            sample = replay_buffer.sample(batch_size)
+
+            if not model_initialized:
+                model_initialized = True
+                initialize_interdependent_variables(session, tf.global_variables(), {
+                    obs_t_ph: sample.obs_batch,
+                    obs_tp1_ph: sample.next_obs_batch,
+                })
+
+            session.run(train_fn, feed_dict = {
+                obs_t_ph : sample.obs_batch,
+                act_t_ph : sample.act_batch,
+                rew_t_ph : sample.rew_batch,
+                obs_tp1_ph : sample.next_obs_batch,
+                done_mask_ph : sample.done_mask,
+                })
+
+
+            num_param_updates = num_param_updates + 1
+            if num_param_updates % target_update_freq == 0:
+                session.run(update_target_fn)
 
             #####
 
