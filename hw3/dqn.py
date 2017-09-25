@@ -12,12 +12,12 @@ OptimizerSpec = namedtuple("OptimizerSpec", ["constructor", "kwargs", "lr_schedu
 
 EPS_THRESHOLD = 0.99
 
-def select_action(session, fn, state, num_actions):
+def select_action(session, fn, state_placeholder, state, num_actions):
     rnd = np.random.uniform(0, 1.0)
     if rnd > EPS_THRESHOLD:
         return np.random.randint(0, num_actions)
     else:
-        vs = session.run(fn, feed_dict = {state}) # shape [num_actions]
+        vs = session.run(fn, feed_dict = {state_placeholder : state}) # shape [num_actions]
         return np.argmax(vs)
 
 def learn(env,
@@ -145,6 +145,12 @@ def learn(env,
 
     # create q_values output from model
     state_action_values = q_func(obs_t_float, num_actions, "q_func_vars", False) # shape: [None, num_actions]
+
+    #data = np.zeros((1, 84, 84, 4))
+    #print("data shape: ", data.shape)
+    #session.run(state_action_values, feed_dict = { obs_t_float : data} )
+
+
     # compute next q values = r + max q'
     next_state_values = q_func(obs_tp1_float, num_actions, "target_q_func_vars", False) # shape: [None, num_actions]
     expected_state_action_values = next_state_values * gamma + rew_t_ph
@@ -222,13 +228,21 @@ def learn(env,
         #####
         
 
-
-
         # YOUR CODE HERE
         idx = replay_buffer.store_frame(last_obs)
 
         frame = replay_buffer.encode_recent_observation()
-        action = select_action(session, q_func, frame, num_actions)
+        print("frame shape: ", frame.shape)
+        print("last_obs shape: ", last_obs.shape)
+
+        if not model_initialized:
+            session.run(tf.global_variables_initializer())
+
+        frame_extended = np.expand_dims(frame, axis = 0)
+        action = select_action(session, state_action_values, obs_t_float,
+                               frame_extended, num_actions)
+
+        print("Action selected: ", action)
 
         obs, reward, done, info = env.step(action)
 
@@ -299,10 +313,11 @@ def learn(env,
 
             if not model_initialized:
                 model_initialized = True
-                initialize_interdependent_variables(session, tf.global_variables(), {
+                init_op = initialize_interdependent_variables(session, tf.global_variables(), {
                     obs_t_ph: sample.obs_batch,
                     obs_tp1_ph: sample.next_obs_batch,
                 })
+                session.run(init_op)
 
             session.run(train_fn, feed_dict = {
                 obs_t_ph : sample.obs_batch,
