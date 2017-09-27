@@ -10,11 +10,9 @@ from dqn_utils import *
 
 OptimizerSpec = namedtuple("OptimizerSpec", ["constructor", "kwargs", "lr_schedule"])
 
-EPS_THRESHOLD = 0.99
-
-def select_action(session, fn, state_placeholder, state, num_actions):
+def select_action(session, fn, state_placeholder, state, num_actions, exploration, t):
     rnd = np.random.uniform(0, 1.0)
-    if rnd > EPS_THRESHOLD:
+    if rnd < exploration.value(t):
         return np.random.randint(0, num_actions)
     else:
         vs = session.run(fn, feed_dict = {state_placeholder : state}) # shape [num_actions]
@@ -141,29 +139,18 @@ def learn(env,
     ######
 
 
-
-
     # create q_values output from model
     state_action_values = q_func(obs_t_float, num_actions, "q_func_vars", False) # shape: [None, num_actions]
 
-    #data = np.zeros((1, 84, 84, 4))
-    #print("data shape: ", data.shape)
-    #session.run(state_action_values, feed_dict = { obs_t_float : data} )
-
-
     # compute next q values = r + max q'
     next_state_values = q_func(obs_tp1_float, num_actions, "target_q_func_vars", False) # shape: [None, num_actions]
-    expected_state_action_values = next_state_values * gamma + rew_t_ph
+    expected_state_action_values = next_state_values * gamma + rew_t_ph # shape: 
     total_error = state_action_values - expected_state_action_values
 
     q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = 'q_func_vars')
     target_q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = 'target_q_func_vars')
 
     ######
-
-
-
-
     # construct optimization op (with gradient clipping)
     learning_rate = tf.placeholder(tf.float32, (), name="learning_rate")
     optimizer = optimizer_spec.constructor(learning_rate=learning_rate, **optimizer_spec.kwargs)
@@ -226,8 +213,6 @@ def learn(env,
         # might as well be random, since you haven't trained your net...)
 
         #####
-        
-
         # YOUR CODE HERE
         idx = replay_buffer.store_frame(last_obs)
 
@@ -235,29 +220,23 @@ def learn(env,
         print("frame shape: ", frame.shape)
         print("last_obs shape: ", last_obs.shape)
 
-        if not model_initialized:
-            session.run(tf.global_variables_initializer())
 
         frame_extended = np.expand_dims(frame, axis = 0)
-        action = select_action(session, state_action_values, obs_t_float,
-                               frame_extended, num_actions)
+        if not model_initialized:
+            action = np.random.randint(0, num_actions)
+        else:
+            action = select_action(session, state_action_values, obs_t_float,
+                    frame_extended, num_actions, exploration, t)
 
         print("Action selected: ", action)
 
         obs, reward, done, info = env.step(action)
-
-        if not done:
-            next_state = obs - last_obs
 
         replay_buffer.store_effect(idx, action, reward, done)
 
         last_obs = obs # this should go at the end
         if done:
             last_obs = env.reset()
-
-
-
-
 
 
         #####
